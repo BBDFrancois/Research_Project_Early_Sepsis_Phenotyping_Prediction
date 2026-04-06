@@ -62,5 +62,5 @@ If encoded data is already saved (data/sepsis_processed_full.npz), skip to secti
 
 ## Data
 
-The raw dataset (`data/Dataset.csv`) is derived from MIMIC-III and is not included in this repository.
-Access requires credentialed registration on PhysioNet: https://physionet.org/content/mimiciii/
+The raw dataset (data/Dataset.csv) is derived from MIMIC-III and is not included in this repository.
+Access requires credentialed registration on PhysioNet
