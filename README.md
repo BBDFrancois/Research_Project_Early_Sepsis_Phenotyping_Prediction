@@ -1,4 +1,4 @@
-# Sepsis Early Prediction — MIMIC-III
+# Hybrid and Explainable Architecture for Early Sepsis Phenotyping and Prediction using MIMIC-III data
 
 Research project by François Zapletal (ESILV) under the supervision of Nédra Mellouli : hybrid and explainable architecture for early sepsis phenotyping and prediction using MIMIC-III data.
 The pipeline combines deep learning-based representation learning with a mixture-of-experts classifier
@@ -9,14 +9,14 @@ and an attention-based gating network for patient phenotyping.
 ```
 sepsis-prediction/
 ├── src/
-│   ├── processor.py          # Data loading, windowing, filtering, train/test split
-│   ├── embedder.py           # SAITS + TS2Vec + Autoencoder encoding pipeline
-│   ├── gating_network.py     # Attention gating network (cluster routing)
-│   ├── moe.py                # Mixture of Experts classifier and diagnostics
-│   └── main.ipynb            # Main notebook (full end-to-end run)
+│   ├── processor.py
+│   ├── embedder.py
+│   ├── gating_network.py
+│   ├── moe.py
+│   └── main.ipynb
 ├── data/
-│   ├── Dataset.csv           # Raw MIMIC-III dataset (not versioned)
-│   └── sepsis_processed_full.npz  # Pre-computed encoded representations (generated)
+│   ├── Dataset.csv
+│   └── sepsis_processed_full.npz
 ├── models/
 │   ├── saits_model_base.pth
 │   ├── ts2vec_model_base.pth
@@ -24,7 +24,7 @@ sepsis-prediction/
 │   ├── saits_model_centered.pth
 │   ├── ts2vec_model_centered.pth
 │   └── autoencoder_model_centered.pth
-├── annex/                    # Generated figures and outputs
+├── annex/
 ├── .gitignore
 └── README.md
 ```
