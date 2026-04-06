@@ -1,0 +1,32 @@
+# Data
+data/Dataset.csv
+data/*.csv
+
+# Models (large files)
+models/*.pth
+models/*.pt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+*.log
+results/
