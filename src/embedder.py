@@ -153,28 +153,15 @@ class SepsisEncodingPipeline:
         print(df_cleaned.info())
 
         df_train_global, df_test = processor.split_train_test()
-
-        has_test_data = False
+        
         X_test_pids = np.array([])
         y_test = np.array([])
         X_test_encoded = np.array([])
 
-        if df_test is not None and not df_test.empty:
-            has_test_data = True
-            X_test_pids = df_test.sort_values(['Patient_ID', 'Hour'])['Patient_ID'].unique()
-            X_test_raw, y_test = processor.to_tensor(df_test)
-        else:
-            print("Warning: test set is empty, test processing will be skipped.")
-            X_test_raw = None
+        X_test_raw, y_test, X_test_pids = processor.to_tensor(df_test)
+        X_train_global, y_train, X_train_pids = processor.to_tensor(df_train_global)
 
-        X_train_pids = df_train_global.sort_values(['Patient_ID', 'Hour'])['Patient_ID'].unique()
-        X_train_global, y_train = processor.to_tensor(df_train_global)
-
-        if has_test_data:
-            X_train_global, X_test_raw = processor.standardize_tensors(X_train_global, X_test_raw)
-        else:
-            dummy = X_train_global.copy()
-            X_train_global, _ = processor.standardize_tensors(X_train_global, dummy)
+        X_train_global, X_test_raw = processor.standardize_tensors(X_train_global, X_test_raw)
 
         n_steps, n_features = X_train_global.shape[1], X_train_global.shape[2]
 
@@ -190,10 +177,7 @@ class SepsisEncodingPipeline:
             print("Pre-trained SAITS provided, running inference.")
 
         X_train_imp = saits_model.predict({"X": X_train_global})["imputation"].astype('float32')
-        if has_test_data:
-            X_test_imp = saits_model.predict({"X": X_test_raw})["imputation"].astype('float32')
-        else:
-            X_test_imp = None
+        X_test_imp = saits_model.predict({"X": X_test_raw})["imputation"].astype('float32')
 
         # Step 3: TS2Vec temporal embedding
         print("Step 3: TS2Vec embedding")
@@ -210,22 +194,16 @@ class SepsisEncodingPipeline:
         N_train, T, F_emb = emb_train.shape
         X_train_flat = emb_train.reshape(N_train, T * F_emb)
 
-        if has_test_data and X_test_imp is not None:
-            emb_test = ts2vec_model.predict({"X": X_test_imp})["representation"]
-            X_test_flat = emb_test.reshape(emb_test.shape[0], T * F_emb)
-        else:
-            X_test_flat = None
+        emb_test = ts2vec_model.predict({"X": X_test_imp})["representation"]
+        X_test_flat = emb_test.reshape(emb_test.shape[0], T * F_emb)
 
         # Step 4: Autoencoder
         print("Step 4: Autoencoder")
         X_train_ae_in = self.scaler_ae.fit_transform(X_train_flat)
         tensor_train_global = torch.FloatTensor(X_train_ae_in).to(self.device)
 
-        if has_test_data and X_test_flat is not None:
-            X_test_ae_in = self.scaler_ae.transform(X_test_flat)
-            tensor_test = torch.FloatTensor(X_test_ae_in).to(self.device)
-        else:
-            tensor_test = None
+        X_test_ae_in = self.scaler_ae.transform(X_test_flat)
+        tensor_test = torch.FloatTensor(X_test_ae_in).to(self.device)
 
         if ae_model is None:
             print("Training Autoencoder...")
@@ -283,11 +261,9 @@ class SepsisEncodingPipeline:
             encoded_train, _ = ae_model(tensor_train_global)
             X_train_encoded = encoded_train.cpu().numpy()
 
-            if tensor_test is not None:
-                encoded_test, _ = ae_model(tensor_test)
-                X_test_encoded = encoded_test.cpu().numpy()
-            else:
-                X_test_encoded = np.array([])
+            encoded_test, _ = ae_model(tensor_test)
+            X_test_encoded = encoded_test.cpu().numpy()
+
 
         print(f"Pipeline complete. Train shape: {X_train_encoded.shape}, Test shape: {X_test_encoded.shape}")
 
@@ -303,7 +279,6 @@ class SepsisEncodingPipeline:
             os.makedirs(folder)
 
         X_train, X_test, y_train, y_test, pid_train, pid_test = data_out
-        X_cen_train, X_cen_test, y_cen_train, y_cen_test, pid_cen_train, pid_cen_test = data_centered_out
 
         data_dict = {
             'X_train_encoded': X_train,
@@ -312,12 +287,6 @@ class SepsisEncodingPipeline:
             'y_test': y_test,
             'X_train_pids': pid_train,
             'X_test_pids': pid_test,
-            'X_centered_train_encoded': X_cen_train,
-            'X_centered_test_encoded': X_cen_test,
-            'y_centered_train': y_cen_train,
-            'y_centered_test': y_cen_test,
-            'X_centered_train_pids': pid_cen_train,
-            'X_centered_test_pids': pid_cen_test
         }
 
         save_path = os.path.join(folder, "sepsis_processed_full.npz")
@@ -344,10 +313,4 @@ class SepsisEncodingPipeline:
             loaded['X_train_pids'], loaded['X_test_pids']
         )
 
-        data_centered_out = (
-            loaded['X_centered_train_encoded'], loaded['X_centered_test_encoded'],
-            loaded['y_centered_train'], loaded['y_centered_test'],
-            loaded['X_centered_train_pids'], loaded['X_centered_test_pids']
-        )
-
-        return data_out, data_centered_out
+        return data_out

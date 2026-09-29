@@ -180,8 +180,9 @@ class SepsisDataProcessor:
         if df_filtered is None:
             df_filtered = self.df.copy()
 
-        df_sorted = df_filtered.sort_values(['Patient_ID', 'Hour'])
+        df_sorted = df_filtered.sort_values(['Patient_ID', 'Hour'])  
         y = df_sorted.groupby('Patient_ID')['will_have_sepsis'].first().values
+        pids = df_sorted['Patient_ID'].unique() 
         features_df = df_sorted.drop(columns=exclude_cols)
 
         n_patients = df_sorted['Patient_ID'].nunique()
@@ -193,7 +194,7 @@ class SepsisDataProcessor:
         print(f"Tensor X shape: {x.shape} (patients, hours, features)")
         print(f"Vector y shape: {y.shape}")
 
-        return x, y
+        return x, y, pids
 
     @staticmethod
     def standardize_tensors(x_train, x_test):
