@@ -271,7 +271,7 @@ class SepsisEncodingPipeline:
             saits_model, ts2vec_model, ae_model)
 
     @staticmethod
-    def save_processed_data(data_out, data_centered_out, folder="../data"):
+    def save_processed_data(data_out, folder="../data"):
         """
         Saves both standard and centered encoded datasets into a single compressed .npz file.
         """
