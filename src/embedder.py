@@ -57,6 +57,7 @@ class SepsisEncodingPipeline:
                  min_presence_pct=0.5,
                  essential_cols=None,
                  validation_split=0.2,
+                 test_split=0.2,
                  saits_epochs=10,
                  saits_batch_size=32,
                  ts2vec_output_dims=32,
@@ -72,6 +73,7 @@ class SepsisEncodingPipeline:
         self.file_path = file_path
         self.essential_cols = essential_cols
         self.validation_split = validation_split
+        self.test_split = test_split
         self.random_state = random_state
 
         self.window_params = {
@@ -152,18 +154,16 @@ class SepsisEncodingPipeline:
         )
         print(df_cleaned.info())
 
-        df_train_global, df_test = processor.split_train_test()
-        
-        X_test_pids = np.array([])
-        y_test = np.array([])
-        X_test_encoded = np.array([])
+        df_train, df_val, df_test = processor.split_train_val_test(
+            val_size=self.validation_split, test_size=self.test_split, random_state=self.random_state)
 
         X_test_raw, y_test, X_test_pids = processor.to_tensor(df_test)
-        X_train_global, y_train, X_train_pids = processor.to_tensor(df_train_global)
+        X_val_raw, y_val, X_val_pids = processor.to_tensor(df_val)
+        X_train_raw, y_train, X_train_pids = processor.to_tensor(df_train)
 
-        X_train_global, X_test_raw = processor.standardize_tensors(X_train_global, X_test_raw)
+        X_train_raw, X_val_raw, X_test_raw = processor.standardize_tensors(X_train_raw, X_val_raw, X_test_raw)
 
-        n_steps, n_features = X_train_global.shape[1], X_train_global.shape[2]
+        n_steps, n_features = X_train_raw.shape[1], X_train_raw.shape[2]
 
         # Step 2: SAITS imputation
         print("Step 2: SAITS imputation")
@@ -171,12 +171,13 @@ class SepsisEncodingPipeline:
             print("Training SAITS...")
             saits = SAITS(n_steps=n_steps, n_features=n_features, device=self.device,
                           saving_path="models/saits_tmp", **self.saits_params)
-            saits.fit(train_set={"X": X_train_global})
+            saits.fit(train_set={"X": X_train_raw}) # changer why not
             saits_model = saits
         else:
             print("Pre-trained SAITS provided, running inference.")
 
-        X_train_imp = saits_model.predict({"X": X_train_global})["imputation"].astype('float32')
+        X_train_imp = saits_model.predict({"X": X_train_raw})["imputation"].astype('float32')
+        X_val_imp = saits_model.predict({"X": X_val_raw})["imputation"].astype('float32')
         X_test_imp = saits_model.predict({"X": X_test_raw})["imputation"].astype('float32')
 
         # Step 3: TS2Vec temporal embedding
@@ -185,7 +186,7 @@ class SepsisEncodingPipeline:
             print("Training TS2Vec...")
             ts2vec = TS2Vec(n_steps=n_steps, n_features=n_features, device=self.device,
                             saving_path="models/ts2vec_tmp", **self.ts2vec_params)
-            ts2vec.fit(train_set={"X": X_train_imp})
+            ts2vec.fit(train_set={"X": X_train_imp}) # changer why not
             ts2vec_model = ts2vec
         else:
             print("Pre-trained TS2Vec provided, running inference.")
@@ -194,34 +195,32 @@ class SepsisEncodingPipeline:
         N_train, T, F_emb = emb_train.shape
         X_train_flat = emb_train.reshape(N_train, T * F_emb)
 
+        emb_val = ts2vec_model.predict({"X": X_val_imp})["representation"]
+        X_val_flat = emb_val.reshape(emb_val.shape[0], T * F_emb)
+
         emb_test = ts2vec_model.predict({"X": X_test_imp})["representation"]
         X_test_flat = emb_test.reshape(emb_test.shape[0], T * F_emb)
 
         # Step 4: Autoencoder
         print("Step 4: Autoencoder")
         X_train_ae_in = self.scaler_ae.fit_transform(X_train_flat)
-        tensor_train_global = torch.FloatTensor(X_train_ae_in).to(self.device)
+        tensor_train = torch.FloatTensor(X_train_ae_in).to(self.device)
+
+        X_val_ae_in = self.scaler_ae.transform(X_val_flat)
+        tensor_val = torch.FloatTensor(X_val_ae_in).to(self.device)
 
         X_test_ae_in = self.scaler_ae.transform(X_test_flat)
         tensor_test = torch.FloatTensor(X_test_ae_in).to(self.device)
 
         if ae_model is None:
             print("Training Autoencoder...")
-            idx = np.arange(len(X_train_global))
-            train_idx, val_idx = train_test_split(idx, test_size=self.validation_split, random_state=self.random_state)
-
-            X_train_ae_sub = X_train_ae_in[train_idx]
-            X_val_ae = X_train_ae_in[val_idx]
-
-            tensor_train_sub = torch.FloatTensor(X_train_ae_sub).to(self.device)
-            tensor_val = torch.FloatTensor(X_val_ae).to(self.device)
 
             ae = SimpleAutoEncoder(X_train_flat.shape[1], self.ae_params['latent_dim']).to(self.device)
             optimizer = optim.Adam(ae.parameters(), lr=self.ae_params['lr'])
             criterion = nn.MSELoss()
 
-            train_loader = DataLoader(TensorDataset(tensor_train_sub), batch_size=self.ae_params['batch_size'],
-                                      shuffle=True)
+            train_loader = DataLoader(TensorDataset(tensor_train), batch_size=self.ae_params['batch_size'],
+                                      shuffle=True, drop_last=True)
             val_loader = DataLoader(TensorDataset(tensor_val), batch_size=self.ae_params['batch_size'], shuffle=False)
 
             history_train, history_val = [], []
@@ -258,16 +257,19 @@ class SepsisEncodingPipeline:
         # Step 5: Final inference
         ae_model.eval()
         with torch.no_grad():
-            encoded_train, _ = ae_model(tensor_train_global)
+            encoded_train, _ = ae_model(tensor_train)
             X_train_encoded = encoded_train.cpu().numpy()
+
+            encoded_val, _ = ae_model(tensor_val)
+            X_val_encoded = encoded_val.cpu().numpy()
 
             encoded_test, _ = ae_model(tensor_test)
             X_test_encoded = encoded_test.cpu().numpy()
 
 
-        print(f"Pipeline complete. Train shape: {X_train_encoded.shape}, Test shape: {X_test_encoded.shape}")
+        print(f"Pipeline complete. Train shape: {X_train_encoded.shape}, Val shape: {X_val_encoded.shape}, Test shape: {X_test_encoded.shape}")
 
-        return (X_train_encoded, X_test_encoded, y_train, y_test, X_train_pids, X_test_pids), (
+        return (X_train_encoded, X_val_encoded, X_test_encoded, y_train, y_val, y_test, X_train_pids, X_val_pids, X_test_pids), (
             saits_model, ts2vec_model, ae_model)
 
     @staticmethod
@@ -278,14 +280,17 @@ class SepsisEncodingPipeline:
         if not os.path.exists(folder):
             os.makedirs(folder)
 
-        X_train, X_test, y_train, y_test, pid_train, pid_test = data_out
+        X_train, X_val, X_test, y_train, y_val, y_test, pid_train, pid_val, pid_test = data_out
 
         data_dict = {
             'X_train_encoded': X_train,
+            'X_val_encoded': X_val,
             'X_test_encoded': X_test,
             'y_train': y_train,
+            'y_val': y_val,
             'y_test': y_test,
             'X_train_pids': pid_train,
+            'X_val_pids': pid_val,
             'X_test_pids': pid_test,
         }
 
@@ -308,9 +313,9 @@ class SepsisEncodingPipeline:
         print(f"Available arrays: {loaded.files}")
 
         data_out = (
-            loaded['X_train_encoded'], loaded['X_test_encoded'],
-            loaded['y_train'], loaded['y_test'],
-            loaded['X_train_pids'], loaded['X_test_pids']
+            loaded['X_train_encoded'], loaded['X_val_encoded'], loaded['X_test_encoded'],
+            loaded['y_train'], loaded['y_val'], loaded['y_test'],
+            loaded['X_train_pids'], loaded['X_val_pids'], loaded['X_test_pids']
         )
 
         return data_out

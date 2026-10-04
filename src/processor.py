@@ -143,7 +143,7 @@ class SepsisDataProcessor:
         self.df = df_cleaned.copy()
         return df_cleaned
 
-    def split_train_test(self, df_input=None, test_size=0.2, random_state=42):
+    def split_train_val_test(self, df_input=None, val_size=0.2, test_size=0.2, random_state=42):
         """
         Splits data into train and test sets at the patient level to prevent leakage.
         Stratification is applied to preserve the sepsis/non-sepsis ratio in both sets.
@@ -151,23 +151,32 @@ class SepsisDataProcessor:
         if df_input is None:
             df_input = self.df
 
-        unique_patients = df_input['Patient_ID'].unique()
-        labels = df_input.groupby('Patient_ID')['will_have_sepsis'].first().values
+        patient_labels = df_input.groupby('Patient_ID')['will_have_sepsis'].first()
+        ids = patient_labels.index.values
 
-        train_ids, test_ids = train_test_split(
-            unique_patients,
+        train_ids_tempo, test_ids = train_test_split(
+            ids,
             test_size=test_size,
             random_state=random_state,
-            stratify=labels
+            stratify=patient_labels.values
+        )
+
+        train_ids, val_ids = train_test_split(
+            train_ids_tempo,
+            test_size=val_size / (1 - test_size),
+            random_state=random_state,
+            stratify=patient_labels.loc[train_ids_tempo].values
         )
 
         df_train = df_input[df_input['Patient_ID'].isin(train_ids)]
+        df_val = df_input[df_input['Patient_ID'].isin(val_ids)]
         df_test = df_input[df_input['Patient_ID'].isin(test_ids)]
 
         print(f"Train set: {df_train['Patient_ID'].nunique()} patients")
+        print(f"Validation set: {df_val['Patient_ID'].nunique()} patients")
         print(f"Test set:  {df_test['Patient_ID'].nunique()} patients")
 
-        return df_train, df_test
+        return df_train, df_val, df_test
 
     def to_tensor(self, df_filtered=None, exclude_cols=None):
         """
@@ -197,30 +206,34 @@ class SepsisDataProcessor:
         return x, y, pids
 
     @staticmethod
-    def standardize_tensors(x_train, x_test):
+    def standardize_tensors(x_train, x_val, x_test):
         """
         Standardizes 3D tensors (N, T, C) by fitting a StandardScaler on the training set
         and applying the same transformation to the test set to prevent data leakage.
         """
         n_tr, t_tr, c_tr = x_train.shape
+        n_va, t_va, c_va = x_val.shape
         n_te, t_te, c_te = x_test.shape
 
         scaler = StandardScaler()
 
         x_train_flat = x_train.reshape(-1, c_tr)
+        x_val_flat = x_val.reshape(-1, c_va)
         x_test_flat = x_test.reshape(-1, c_te)
 
         print(f"Standardizing {c_tr} features...")
 
         x_train_scaled_flat = scaler.fit_transform(x_train_flat)
+        x_val_scaled_flat = scaler.transform(x_val_flat)
         x_test_scaled_flat = scaler.transform(x_test_flat)
 
         x_train_scaled = x_train_scaled_flat.reshape(n_tr, t_tr, c_tr)
+        x_val_scaled = x_val_scaled_flat.reshape(n_va, t_va, c_va)
         x_test_scaled = x_test_scaled_flat.reshape(n_te, t_te, c_te)
 
         print("Standardization complete.")
 
-        return x_train_scaled, x_test_scaled
+        return x_train_scaled, x_val_scaled, x_test_scaled
 
     @staticmethod
     def plot_sepsis_onset_distribution(df_input):

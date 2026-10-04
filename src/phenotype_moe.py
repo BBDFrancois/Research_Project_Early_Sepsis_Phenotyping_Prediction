@@ -284,6 +284,7 @@ def train_phenotype_moe(model, z_train, y_train, z_val, y_val,
     return model, history
 
 
+from sklearn.metrics import confusion_matrix, classification_report
 @torch.no_grad()
 def evaluate_phenotype_moe(model, z, y, threshold=0.5, device='cpu'):
     """
@@ -334,6 +335,7 @@ def evaluate_phenotype_moe(model, z, y, threshold=0.5, device='cpu'):
         'g': g_np,
         'assignments': assignments,
     }
+
 
 
 def plot_training_curves(history):
