@@ -18,9 +18,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.cluster import KMeans
-from sklearn.metrics import roc_auc_score, confusion_matrix, accuracy_score, classification_report
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.manifold import TSNE
+from sklearn.metrics import (confusion_matrix, classification_report, 
+                             roc_curve, auc, roc_auc_score, precision_recall_curve, silhouette_score)
 
 
 # --------------------------------------------------------------------------- #
@@ -283,93 +285,104 @@ def train_phenotype_moe(model, z_train, y_train, z_val, y_val,
 
     return model, history
 
-
-from sklearn.metrics import confusion_matrix, classification_report
 @torch.no_grad()
-def evaluate_phenotype_moe(model, z, y, threshold=0.5, device='cpu'):
-    """
-    A single forward pass, no weight update. Use on val (during tuning) and
-    only once on test (at the very end).
-    Returns a metrics dict + the g/p arrays for further analysis (e.g.
-    clinical characterization of the groups).
-    """
+def evaluate_phenotype_moe_plus(model, z, y, history=None, threshold=0.5, device='cpu'):
     model.eval()
-    z = z.to(device)
-    p, g, p_k, h = model(z)
-
-    p_np = p.cpu().numpy()
-    g_np = g.cpu().numpy()
+    z_tensor = torch.FloatTensor(z).to(device) if not torch.is_tensor(z) else z.to(device)
     y_np = y.cpu().numpy() if torch.is_tensor(y) else np.asarray(y)
 
+    # Inférence
+    p, g, p_k, h = model(z_tensor)
+    p_np = p.cpu().numpy()
+    g_np = g.cpu().numpy()
+    h_np = h.cpu().numpy()
+    
     y_pred = (p_np >= threshold).astype(int)
-
-    cm = confusion_matrix(y_np, y_pred)
-    report = classification_report(y_np, y_pred, zero_division=0)
-
-    # Extraction TP, FP, TN, FN (si classification binaire)
-    if cm.shape == (2, 2):
-        tn, fp, fn, tp = cm.ravel()
-        print(f"Confusion Matrix -> TP: {tp} | FP: {fp} | TN: {tn} | FN: {fn}")
-    else:
-        print(f"Confusion Matrix:\n{cm}")
-        
-    print(f"\nClassification Report (F1-score par classe):\n{report}")
-
-    auroc = roc_auc_score(y_np, p_np)
     assignments = g_np.argmax(axis=1)
-    g_bar = g_np.mean(axis=0)
-    g_entropy = -(g_np * np.log(g_np + 1e-8)).sum(axis=1).mean()
-    max_g = g_np.max(axis=1).mean()  # close to 1 -> near-hard clustering; close to 1/K -> fully mixed
 
-    print(f"AUROC: {auroc:.4f}")
-    print(f"Group distribution (g_bar): {np.round(g_bar, 3)}")
-    print(f"Mean entropy of g: {g_entropy:.4f}")
-    print(f"Mean confidence (max_k g_k): {max_g:.4f}")
+    # --- 1. RAPPORTS TEXTUELS ---
+    print("="*50)
+    print("      DIAGNOSTIC GLOBAL : Phenotype MoE")
+    print("="*50)
+    print("\n[Rapport de Classification]")
+    print(classification_report(y_np, y_pred, zero_division=0))
 
-    return {
-        'auroc': auroc,
-        'g_bar': g_bar,
-        'g_entropy': g_entropy,
-        'max_g': max_g,
-        'p': p_np,
-        'g': g_np,
-        'assignments': assignments,
-    }
+    # Calcul du Silhouette Score (possible uniquement si > 1 cluster utilisé)
+    if len(np.unique(assignments)) > 1:
+        sil_score = silhouette_score(h_np, assignments)
+    else:
+        sil_score = -1.0
+        
+    print("\n[Métriques de Clustering]")
+    print(f"Score de Silhouette        : {sil_score:.4f} (proche de 1 = clusters très nets)")
+    print(f"Entropie moyenne (H)       : {-(g_np * np.log(g_np + 1e-8)).sum(axis=1).mean():.4f}")
+    print(f"Confiance maximale moyenne : {g_np.max(axis=1).mean():.4f}")
+    print(f"Répartition des patients   : {np.bincount(assignments, minlength=model.n_clusters)}")
 
+    # --- 2. TABLEAU DE BORD VISUEL ---
+    fig = plt.figure(figsize=(18, 10))
 
+    # A. Matrice de Confusion (Heatmap)
+    ax1 = plt.subplot(2, 3, 1)
+    cm = confusion_matrix(y_np, y_pred)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax1,
+                xticklabels=['Sain (0)', 'Sepsis (1)'], yticklabels=['Sain (0)', 'Sepsis (1)'])
+    ax1.set_title("Matrice de Confusion")
+    ax1.set_ylabel("Vérité Terrain")
+    ax1.set_xlabel("Prédiction")
 
-def plot_training_curves(history):
-    """Monitoring plots: losses, val AUROC, group distribution, entropy."""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 8))
+    # B. Courbe ROC
+    ax2 = plt.subplot(2, 3, 2)
+    fpr, tpr, _ = roc_curve(y_np, p_np)
+    roc_auc = auc(fpr, tpr)
+    ax2.plot(fpr, tpr, color='darkorange', lw=2, label=f'AUROC = {roc_auc:.3f}')
+    ax2.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    ax2.set_title("Courbe ROC")
+    ax2.set_xlabel("Taux de Faux Positifs")
+    ax2.set_ylabel("Taux de Vrais Positifs")
+    ax2.legend(loc="lower right")
 
-    axes[0, 0].plot(history['pred'], label='L_pred')
-    axes[0, 0].plot(history['ent'], label='L_ent')
-    axes[0, 0].plot(history['compact'], label='L_compact')
-    axes[0, 0].plot(history['margin'], label='L_margin')
-    axes[0, 0].plot(history['balance'], label='L_balance')
-    axes[0, 0].set_title("Loss components (train)")
-    axes[0, 0].set_xlabel("Epoch")
-    axes[0, 0].legend()
-    axes[0, 0].grid(alpha=0.3)
+    # C. Courbe Precision-Recall
+    ax3 = plt.subplot(2, 3, 3)
+    precision, recall, _ = precision_recall_curve(y_np, p_np)
+    pr_auc = auc(recall, precision)
+    ax3.plot(recall, precision, color='purple', lw=2, label=f'AUPRC = {pr_auc:.3f}')
+    ax3.set_title("Courbe Precision-Recall")
+    ax3.set_xlabel("Recall (Sensibilité)")
+    ax3.set_ylabel("Precision (VPP)")
+    ax3.legend(loc="lower left")
 
-    axes[0, 1].plot(history['val_auroc'], color='darkorange')
-    axes[0, 1].set_title("AUROC (validation)")
-    axes[0, 1].set_xlabel("Epoch")
-    axes[0, 1].grid(alpha=0.3)
+    # D. Projection t-SNE de l'espace caché (Phénotypes)
+    ax4 = plt.subplot(2, 3, 4)
+    tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+    h_tsne = tsne.fit_transform(h_np)
+    scatter = ax4.scatter(h_tsne[:, 0], h_tsne[:, 1], c=assignments, cmap='Set1', alpha=0.7, s=15)
+    ax4.set_title("t-SNE : Phénotypes découverts")
+    legend1 = ax4.legend(*scatter.legend_elements(), title="Expert assigné", loc="best")
+    ax4.add_artist(legend1)
 
-    g_bar_arr = np.array(history['g_bar'])  # (epochs, K)
-    for k in range(g_bar_arr.shape[1]):
-        axes[1, 0].plot(g_bar_arr[:, k], label=f'Group {k}')
-    axes[1, 0].axhline(1 / g_bar_arr.shape[1], color='gray', linestyle='--', label='Uniform')
-    axes[1, 0].set_title("Mean group distribution (g_bar) — validation")
-    axes[1, 0].set_xlabel("Epoch")
-    axes[1, 0].legend()
-    axes[1, 0].grid(alpha=0.3)
+    # E & F. Évolution de l'entraînement (si history est fourni)
+    if history is not None:
+        ax5 = plt.subplot(2, 3, 5)
+        ax5.plot(history['total'], label='Loss Totale', color='black', lw=2)
+        ax5.plot(history['pred'], label='L_pred (BCE)', linestyle='--')
+        ax5.set_title("Dynamique de la Fonction de Perte (Train)")
+        ax5.set_xlabel("Époques")
+        ax5.legend()
 
-    axes[1, 1].plot(history['g_entropy'], color='green')
-    axes[1, 1].set_title("Mean entropy of g (validation)")
-    axes[1, 1].set_xlabel("Epoch")
-    axes[1, 1].grid(alpha=0.3)
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.plot(history['val_auroc'], label='AUROC (Validation)', color='darkorange', lw=2)
+        ax6.set_title("Performance de Validation")
+        ax6.set_xlabel("Époques")
+        ax6.legend()
+    else:
+        # Si on passe un Test set sans historique, on masque ces graphes
+        ax5 = plt.subplot(2, 3, 5)
+        ax5.axis('off')
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
 
     plt.tight_layout()
     plt.show()
+
+    return p_np, assignments
