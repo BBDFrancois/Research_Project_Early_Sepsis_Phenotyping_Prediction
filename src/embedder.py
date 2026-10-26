@@ -78,7 +78,7 @@ class SepsisEncodingPipeline:
 
         self.window_params = {
             'window_start': window_start, 'window_end': window_end,
-            'start_for_non_sepsis': True, 'non_sepsis_ratio': 1.0
+            'start_for_non_sepsis': False, 'non_sepsis_ratio': 1.0
         }
         self.min_presence_pct = min_presence_pct
 
@@ -269,7 +269,7 @@ class SepsisEncodingPipeline:
 
         print(f"Pipeline complete. Train shape: {X_train_encoded.shape}, Val shape: {X_val_encoded.shape}, Test shape: {X_test_encoded.shape}")
 
-        return (X_train_encoded, X_val_encoded, X_test_encoded, y_train, y_val, y_test, X_train_pids, X_val_pids, X_test_pids), (
+        return df_cleaned, (X_train_encoded, X_val_encoded, X_test_encoded, y_train, y_val, y_test, X_train_pids, X_val_pids, X_test_pids), (
             saits_model, ts2vec_model, ae_model)
 
     @staticmethod

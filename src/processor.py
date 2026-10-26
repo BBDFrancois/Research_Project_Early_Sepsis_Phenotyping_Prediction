@@ -23,6 +23,9 @@ class SepsisDataProcessor:
         Creates patient-level labels and sepsis onset hour from raw SepsisLabel column.
         Adds will_have_sepsis and sepsis_onset_hour columns if not already present.
         """
+        n_duplicates = self.df.duplicated(subset=['Patient_ID', 'Hour']).sum()
+        if n_duplicates > 0:
+            raise ValueError(f"Dataset invalide : {n_duplicates} lignes en doublon sur (Patient_ID, Hour).")
         if 'will_have_sepsis' not in self.df.columns:
             if 'SepsisLabel' in self.df.columns:
                 sepsis_info = self.df.groupby('Patient_ID')['SepsisLabel'].max().reset_index()
@@ -40,7 +43,7 @@ class SepsisDataProcessor:
     def window_selection(self,
                          window_start: int = -12,
                          window_end: int = 0,
-                         start_for_non_sepsis: bool = True,
+                         start_for_non_sepsis: bool = False,
                          non_sepsis_ratio: float = 1.0):
         """
         Selects a fixed-length temporal window around sepsis onset for each patient.
