@@ -269,8 +269,34 @@ class SepsisEncodingPipeline:
 
         print(f"Pipeline complete. Train shape: {X_train_encoded.shape}, Val shape: {X_val_encoded.shape}, Test shape: {X_test_encoded.shape}")
 
+        step_representations = {
+        "raw": (
+            X_train_raw.reshape(len(X_train_raw), -1),
+            X_val_raw.reshape(len(X_val_raw), -1),
+            X_test_raw.reshape(len(X_test_raw), -1)
+        ),
+
+        "saits": (
+            X_train_imp.reshape(len(X_train_imp), -1),
+            X_val_imp.reshape(len(X_val_imp), -1),
+            X_test_imp.reshape(len(X_test_imp), -1)
+        ),
+
+        "ts2vec": (
+            X_train_flat,
+            X_val_flat,
+            X_test_flat
+        ),
+
+        "autoencoder": (
+            X_train_encoded,
+            X_val_encoded,
+            X_test_encoded
+        )
+}
+
         return df_cleaned, (X_train_encoded, X_val_encoded, X_test_encoded, y_train, y_val, y_test, X_train_pids, X_val_pids, X_test_pids), (
-            saits_model, ts2vec_model, ae_model)
+            saits_model, ts2vec_model, ae_model), step_representations
 
     @staticmethod
     def save_processed_data(data_out, folder="../data"):

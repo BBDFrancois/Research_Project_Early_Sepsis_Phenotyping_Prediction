@@ -23,6 +23,8 @@ class SepsisDataProcessor:
         Creates patient-level labels and sepsis onset hour from raw SepsisLabel column.
         Adds will_have_sepsis and sepsis_onset_hour columns if not already present.
         """
+        n_patients = self.df['Patient_ID'].nunique()
+        print(f"Nb patients : {n_patients}")
         n_duplicates = self.df.duplicated(subset=['Patient_ID', 'Hour']).sum()
         if n_duplicates > 0:
             raise ValueError(f"Dataset invalide : {n_duplicates} lignes en doublon sur (Patient_ID, Hour).")
@@ -31,6 +33,7 @@ class SepsisDataProcessor:
                 sepsis_info = self.df.groupby('Patient_ID')['SepsisLabel'].max().reset_index()
                 sepsis_info.columns = ['Patient_ID', 'will_have_sepsis']
                 self.df = self.df.merge(sepsis_info, on='Patient_ID', how='left')
+
 
         if 'sepsis_onset_hour' not in self.df.columns:
             if 'SepsisLabel' in self.df.columns:
@@ -98,7 +101,7 @@ class SepsisDataProcessor:
 
         return final_df
 
-    def filter_variables(self, df_input=None, min_patient_presence_pct: float = 0.80, essential_cols=None):
+    def filter_variables(self, df_input=None, min_patient_presence_pct: float = 0.50, essential_cols=None):
         """
         Removes columns that have no measured value for more than (1 - min_patient_presence_pct)
         of patients. Essential columns are always kept regardless of coverage.
@@ -106,14 +109,13 @@ class SepsisDataProcessor:
         if df_input is None:
             df_input = self.df.copy()
 
-        presence_per_patient = df_input.groupby('Patient_ID').apply(lambda x: x.notna().any())
+        presence_per_patient = df_input.groupby('Patient_ID').apply(lambda x: x.notna().mean()) # previously .any()
         patient_coverage = presence_per_patient.mean()
         cols_to_keep = patient_coverage[patient_coverage >= min_patient_presence_pct].index.tolist()
 
         if essential_cols is None:
-            essential_cols = ['Patient_ID', 'Hour', 'will_have_sepsis', 'Lactate',
-                              'Creatinine', 'MAP', 'SBP', 'Bilirubin_total', 'Platelets',
-                              'Temp', 'WBC']
+            #essential_cols = ['Patient_ID', 'Hour', 'will_have_sepsis', 'Lactate', 'Creatinine', 'MAP', 'SBP', 'Bilirubin_total', 'Platelets','Temp', 'WBC']
+            essential_cols = ['Patient_ID', 'Hour', 'will_have_sepsis']
 
         final_cols = list(set(cols_to_keep + essential_cols))
 
@@ -128,9 +130,11 @@ class SepsisDataProcessor:
         Retains only physiological signals, lab values, and will_have_sepsis.
         """
         if not is_hour:
+            # cols_to_drop = [
+                #'Age', 'Gender', 'Unit1', 'Unit2', 'HospAdmTime',
+                #'sepsis_onset_hour', 'ICULOS', 'Unnamed: 0', 'Unnamed: 0.1', 'SepsisLabel']
             cols_to_drop = [
-                'Age', 'Gender', 'Unit1', 'Unit2', 'HospAdmTime',
-                'sepsis_onset_hour', 'ICULOS', 'Unnamed: 0', 'Unnamed: 0.1', 'SepsisLabel']
+                            'sepsis_onset_hour', 'SepsisLabel']
         else:
             cols_to_drop = [
                 'Age', 'Gender', 'Unit1', 'Unit2', 'HospAdmTime',
